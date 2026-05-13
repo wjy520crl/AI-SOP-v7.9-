@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SOP v7.8 强制扫描脚本
+SOP v8.1 强制扫描脚本
 =====================
 自动化扫描小说章节，检测以下问题：
 1. 冻结意象重复
@@ -17,10 +17,27 @@ SOP v7.8 强制扫描脚本
 11. 物品位置追踪链（v7.7 新增）
 12. 章末钩子质量（v7.7 新增）
 13. 时间线过渡完整性（v7.7 新增）
+14. 比喻密度检测（v8.1 新增 R1）
+15. 解释性插入检测（v8.1 新增 R2）
+16. 开篇200字规则（v8.1 新增 R3）
+17. "某种/一种"禁用检测（v8.1 新增 R4）
+18. 体感重复检测（v8.1 新增 R5）
 
 作者：工具开发工程师
-版本：v7.8
-日期：2026-05-12
+版本：v8.1
+日期：2026-05-14
+
+v8.1 更新：
+- 新增R1比喻密度检测：scan_metaphor_density()
+  检测比喻词（像、仿佛、好似、如同、宛如），密度阈值≤1.5/千字
+- 新增R2解释性插入检测：scan_explanatory_insertion()
+  零容忍检测"，不需要/意味着/说明/表明"等解释性插入
+- 新增R3开篇200字规则：scan_opening_200_words()
+  检测前200字是否包含动作/对话/冲突/系统事件
+- 新增R4"某种/一种"禁用检测：scan_vague_modifier()
+  零容忍检测"某种"、"一种"等模糊修饰词
+- 新增R5体感重复检测：scan_body_feeling_repeat()
+  检测体感词重复，每种体感最多出现3次
 
 v7.8 更新：
 - 扫描器修复：scan_bushi_pattern/scan_time_anchor_consistency/scan_item_status_observer/scan_injury_action_conflict
@@ -82,7 +99,11 @@ BUSHI_PATTERNS = [
 THRESHOLDS = {
     "bushi_per_chapter": 0,      # 「不是...是...」每章阈值（v7.4 零容忍）
     "template_repeat": 5,         # 模板重复阈值（v7.8 调整：每章最多5次）
-    "number_sentence_streak": 3   # 数字句连续阈值
+    "number_sentence_streak": 3,  # 数字句连续阈值
+    # v8.1 新增阈值
+    "metaphor_density": 1.5,      # R1 比喻密度阈值（每千字最多1.5个）
+    "metaphor_per_page": 2,       # R1 每页（500字）最多2个比喻
+    "body_feeling_max": 3         # R5 体感词重复上限
 }
 
 # 替换模板库（v7.5 新增）
@@ -94,13 +115,58 @@ REPLACEMENT_TEMPLATES = {
     "安静了*": ["没人接话", "气氛沉下来", "声音断了"],
 }
 
+# v8.1 新增：比喻词列表（R1）
+METAPHOR_WORDS = [
+    "像", "仿佛", "好似", "如同", "宛如"
+]
+
+# v8.1 新增：解释性插入模式（R2）
+EXPLANATORY_INSERTION_PATTERNS = [
+    "，不需要",
+    "，意味着",
+    "，说明",
+    "，表明"
+]
+
+# v8.1 新增：动作动词列表（R3）
+ACTION_VERBS = [
+    "走", "跑", "拿", "放", "说", "看", "听", "想", "做", "去",
+    "来", "站", "坐", "躺", "起", "倒", "跳", "爬", "推", "拉",
+    "抓", "握", "扔", "接", "打", "踢", "砍", "刺", "射", "开",
+    "关", "锁", "拆", "装", "修", "建", "烧", "灭", "洗", "擦"
+]
+
+# v8.1 新增：冲突词列表（R3）
+CONFLICT_WORDS = [
+    "冲突", "争执", "对抗", "争吵", "争论", "矛盾", "纠纷",
+    "打斗", "搏斗", "战斗", "交火", "对峙", "僵持"
+]
+
+# v8.1 新增：系统事件词列表（R3）
+SYSTEM_EVENT_WORDS = [
+    "警报", "信号", "通讯", "消息", "广播", "通知", "指令",
+    "报告", "数据", "屏幕", "显示", "闪烁", "响起"
+]
+
+# v8.1 新增：体感词列表（R5）
+BODY_FEELING_WORDS = [
+    "疼", "痛", "疲惫", "寒冷", "热", "心跳", "呼吸",
+    "酸痛", "麻木", "刺痛", "剧痛", "闷热", "冰冷",
+    "气喘", "窒息", "眩晕", "恶心", "抽搐"
+]
+
+# v8.1 新增：模糊修饰词列表（R4）
+VAGUE_MODIFIERS = [
+    "某种", "一种"
+]
+
 
 # ============================================================================
 # 扫描器类
 # ============================================================================
 
 class SOPScanner:
-    """SOP v7.7 扫描器主类（截图友好模式）"""
+    """SOP v8.1 扫描器主类（截图友好模式）"""
     
     def __init__(self, chapter_path: str, window: int = 5, verbose: bool = False):
         """
@@ -132,7 +198,13 @@ class SOPScanner:
             "location_name_canonical": [],      # v7.7 新增
             "item_location_chain": [],          # v7.7 新增
             "hook_quality": [],                 # v7.7 新增
-            "timeline_transition": []           # v7.7 新增
+            "timeline_transition": [],          # v7.7 新增
+            # v8.1 新增
+            "metaphor_density": {},             # R1 比喻密度
+            "explanatory_insertion": [],        # R2 解释性插入
+            "opening_200_words": {},            # R3 开篇200字规则
+            "vague_modifier": [],               # R4 "某种/一种"禁用
+            "body_feeling_repeat": {}           # R5 体感重复
         }
         
         # 错误级别统计
@@ -1166,23 +1238,29 @@ class SOPScanner:
         for line in self.lines:
             stripped = line.strip()
             
+            # 匹配 "hook_quality_check:"（前面可能有空格）
             if stripped.startswith("hook_quality_check:"):
                 in_hook = True
                 continue
             
             if in_hook:
-                if stripped and not stripped.startswith(" ") and ":" in stripped:
-                    break
+                # 检查是否进入下一个顶级字段（不以空格开头且是新的YAML键）
+                # 但hook_quality_check的子字段都以空格开头
+                if line and not line.startswith(" ") and not line.startswith("\t"):
+                    # 这行不是缩进的，可能是新的顶级字段
+                    if stripped.endswith(":") and not stripped.startswith("hook_"):
+                        break
+                
                 if stripped.startswith("has_hook:"):
                     hook_data["has_hook"] = "true" in stripped.lower()
                 elif stripped.startswith("hook_type:"):
-                    hook_data["hook_type"] = stripped.split(":")[1].strip().strip('"')
+                    hook_data["hook_type"] = stripped.split(":", 1)[1].strip().strip('"')
                 elif stripped.startswith("hook_content:"):
-                    hook_data["hook_content"] = stripped.split(":")[1].strip().strip('"')
+                    hook_data["hook_content"] = stripped.split(":", 1)[1].strip().strip('"')
                 elif stripped.startswith("is_specific:"):
                     hook_data["is_specific"] = "true" in stripped.lower()
                 elif stripped.startswith("character_reaction:"):
-                    hook_data["character_reaction"] = stripped.split(":")[1].strip().strip('"')
+                    hook_data["character_reaction"] = stripped.split(":", 1)[1].strip().strip('"')
         
         return hook_data if hook_data else None
     
@@ -1367,6 +1445,328 @@ class SOPScanner:
         
         return state_data if state_data else None
     
+    # ------------------------------------------------------------------------
+    # v8.1 新增：五类规则检测（R1-R5）
+    # ------------------------------------------------------------------------
+    
+    def scan_metaphor_density(self) -> Dict:
+        """
+        R1 比喻密度检测
+        
+        检测比喻词（像、仿佛、好似、如同、宛如），计算密度
+        规则：比喻数量 / 字数 * 1000 ≤ 1.5
+        每页（500字）最多2个比喻
+        
+        Returns:
+            {
+                "total_metaphors": 总比喻数,
+                "word_count": 字数,
+                "density": 密度（每千字）,
+                "exceeded": 是否超标,
+                "matches": [(行号, 比喻词, 上下文), ...],
+                "page_violations": [超标页码, ...]
+            }
+        """
+        matches = []
+        content_lines = self._get_content_lines_only()
+        
+        # 统计比喻词出现位置
+        for line_num, line in content_lines:
+            for metaphor in METAPHOR_WORDS:
+                # 使用正则确保是比喻用法（后面跟着描述性内容）
+                pattern = re.compile(f'{metaphor}[^，。！？\n]{{1,20}}')
+                for match in pattern.finditer(line):
+                    matches.append((line_num, metaphor, match.group()))
+        
+        # 计算字数（只计算正文）
+        word_count = sum(len(line) for _, line in content_lines)
+        
+        # 计算密度
+        density = (len(matches) / word_count * 1000) if word_count > 0 else 0
+        
+        # 检查是否超标
+        exceeded = density > THRESHOLDS["metaphor_density"]
+        
+        # 检查每页（500字）是否超过2个比喻
+        page_violations = []
+        if word_count > 0:
+            # 按页统计比喻数
+            char_count = 0
+            page_metaphor_count = 0
+            current_page = 1
+            for line_num, line in content_lines:
+                for char in line:
+                    char_count += 1
+                    if char_count > current_page * 500:
+                        # 检查上一页是否超标
+                        if page_metaphor_count > THRESHOLDS["metaphor_per_page"]:
+                            page_violations.append(current_page)
+                        current_page = char_count // 500 + 1
+                        page_metaphor_count = 0
+                # 统计本行比喻数
+                for metaphor in METAPHOR_WORDS:
+                    if metaphor in line:
+                        page_metaphor_count += line.count(metaphor)
+            # 检查最后一页
+            if page_metaphor_count > THRESHOLDS["metaphor_per_page"]:
+                page_violations.append(current_page)
+        
+        result = {
+            "total_metaphors": len(matches),
+            "word_count": word_count,
+            "density": round(density, 2),
+            "exceeded": exceeded,
+            "matches": matches,
+            "page_violations": page_violations
+        }
+        
+        self.results["metaphor_density"] = result
+        
+        # 标记错误级别
+        if exceeded or page_violations:
+            self.warnings += 1
+        
+        return result
+    
+    def scan_explanatory_insertion(self) -> List[Dict]:
+        """
+        R2 解释性插入检测
+        
+        检测模式：
+        - "，不需要"
+        - "，意味着"
+        - "，说明"
+        - "，表明"
+        
+        零容忍，返回所有匹配位置
+        
+        Returns:
+            [{"line": 行号, "pattern": 匹配模式, "text": 上下文}, ...]
+        """
+        matches = []
+        content_lines = self._get_content_lines_only()
+        
+        for line_num, line in content_lines:
+            for pattern in EXPLANATORY_INSERTION_PATTERNS:
+                if pattern in line:
+                    # 提取上下文（前后各20字）
+                    idx = line.find(pattern)
+                    start = max(0, idx - 20)
+                    end = min(len(line), idx + len(pattern) + 20)
+                    context = line[start:end]
+                    matches.append({
+                        "line": line_num,
+                        "pattern": pattern,
+                        "text": context
+                    })
+        
+        self.results["explanatory_insertion"] = matches
+        
+        # 零容忍：任何匹配都是错误
+        if matches:
+            self.errors += 1
+        
+        return matches
+    
+    def scan_opening_200_words(self) -> Dict:
+        """
+        R3 开篇200字规则检测
+        
+        检测前200字是否包含：
+        - 动作动词（走、跑、拿、放、说、看等）
+        - 对话（引号内容）
+        - 冲突词（冲突、争执、对抗等）
+        - 系统事件（警报、信号、通讯等）
+        
+        Returns:
+            {
+                "passed": 是否通过,
+                "missing_elements": [缺少的元素, ...],
+                "found_elements": [找到的元素, ...],
+                "opening_text": 前200字内容
+            }
+        """
+        content_lines = self._get_content_lines_only()
+        
+        # 提取前200字
+        opening_text = ""
+        for line_num, line in content_lines:
+            opening_text += line
+            if len(opening_text) >= 200:
+                opening_text = opening_text[:200]
+                break
+        
+        found_elements = []
+        missing_elements = []
+        
+        # 检测动作动词
+        has_action = any(verb in opening_text for verb in ACTION_VERBS)
+        if has_action:
+            found_elements.append("动作动词")
+        else:
+            missing_elements.append("动作动词")
+        
+        # 检测对话（引号）
+        has_dialog = '"' in opening_text or '"' in opening_text or '"' in opening_text or '「' in opening_text
+        if has_dialog:
+            found_elements.append("对话")
+        else:
+            missing_elements.append("对话")
+        
+        # 检测冲突词
+        has_conflict = any(word in opening_text for word in CONFLICT_WORDS)
+        if has_conflict:
+            found_elements.append("冲突")
+        else:
+            missing_elements.append("冲突")
+        
+        # 检测系统事件
+        has_system_event = any(word in opening_text for word in SYSTEM_EVENT_WORDS)
+        if has_system_event:
+            found_elements.append("系统事件")
+        else:
+            missing_elements.append("系统事件")
+        
+        # 通过条件：至少包含2个元素
+        passed = len(found_elements) >= 2
+        
+        result = {
+            "passed": passed,
+            "missing_elements": missing_elements,
+            "found_elements": found_elements,
+            "opening_text": opening_text
+        }
+        
+        self.results["opening_200_words"] = result
+        
+        # 标记警告级别
+        if not passed:
+            self.warnings += 1
+        
+        return result
+    
+    def scan_vague_modifier(self) -> List[Dict]:
+        """
+        R4 "某种/一种"禁用检测
+        
+        检测模式：
+        - "某种"
+        - "一种"
+        
+        零容忍，返回所有匹配位置
+        
+        Returns:
+            [{"line": 行号, "modifier": 匹配词, "text": 上下文}, ...]
+        """
+        matches = []
+        content_lines = self._get_content_lines_only()
+        
+        for line_num, line in content_lines:
+            for modifier in VAGUE_MODIFIERS:
+                if modifier in line:
+                    # 找到所有出现位置
+                    idx = 0
+                    while True:
+                        idx = line.find(modifier, idx)
+                        if idx == -1:
+                            break
+                        # 提取上下文
+                        start = max(0, idx - 15)
+                        end = min(len(line), idx + len(modifier) + 15)
+                        context = line[start:end]
+                        matches.append({
+                            "line": line_num,
+                            "modifier": modifier,
+                            "text": context
+                        })
+                        idx += len(modifier)
+        
+        self.results["vague_modifier"] = matches
+        
+        # 零容忍：任何匹配都是错误
+        if matches:
+            self.errors += 1
+        
+        return matches
+    
+    def scan_body_feeling_repeat(self) -> Dict:
+        """
+        R5 体感重复检测
+        
+        检测体感词：疼、痛、疲惫、寒冷、热、心跳、呼吸
+        统计每种体感出现次数，超过3次则报告
+        排除组合词：呼吸声（D28沉默填充标准用法）
+        
+        Returns:
+            {
+                "feeling_counts": {体感词: 出现次数, ...},
+                "exceeded": [超标的体感词, ...],
+                "matches": [{"line": 行号, "feeling": 体感词, "text": 上下文}, ...]
+            }
+        """
+        feeling_counts = {}
+        matches = []
+        content_lines = self._get_content_lines_only()
+        
+        # 排除组合词（这些是标准用法，不计入体感重复）
+        exclude_combinations = {
+            "呼吸": ["呼吸声", "呼吸声。", "呼吸声很轻"],
+            "心跳": ["心跳声"],
+        }
+        
+        for feeling in BODY_FEELING_WORDS:
+            feeling_counts[feeling] = 0
+        
+        for line_num, line in content_lines:
+            for feeling in BODY_FEELING_WORDS:
+                # 检查是否在排除组合中
+                if feeling in exclude_combinations:
+                    # 先排除组合词
+                    temp_line = line
+                    for combo in exclude_combinations[feeling]:
+                        temp_line = temp_line.replace(combo, "")
+                    count = temp_line.count(feeling)
+                else:
+                    count = line.count(feeling)
+                
+                if count > 0:
+                    feeling_counts[feeling] += count
+                    # 记录匹配位置
+                    idx = 0
+                    for _ in range(count):
+                        idx = line.find(feeling, idx)
+                        if idx == -1:
+                            break
+                        start = max(0, idx - 10)
+                        end = min(len(line), idx + len(feeling) + 10)
+                        context = line[start:end]
+                        matches.append({
+                            "line": line_num,
+                            "feeling": feeling,
+                            "text": context
+                        })
+                        idx += len(feeling)
+        
+        # 检查超标
+        exceeded = [
+            feeling for feeling, count in feeling_counts.items()
+            if count > THRESHOLDS["body_feeling_max"]
+        ]
+        
+        result = {
+            "feeling_counts": feeling_counts,
+            "exceeded": exceeded,
+            "matches": matches
+        }
+        
+        self.results["body_feeling_repeat"] = result
+        
+        # 标记警告级别
+        if exceeded:
+            self.warnings += 1
+        
+        return result
+    
     def _chinese_to_number(self, chinese: str) -> int:
         """
         中文数字转阿拉伯数字
@@ -1407,7 +1807,7 @@ class SOPScanner:
     
     def generate_report(self) -> str:
         """
-        生成扫描报告（v7.6 截图友好模式）
+        生成扫描报告（v8.1 截图友好模式）
         
         Returns:
             报告文本
@@ -1417,11 +1817,11 @@ class SOPScanner:
         
         # 报告头（截图友好格式）
         lines.append("=" * 50)
-        lines.append("SOP v7.8 强制扫描报告")
+        lines.append("SOP v8.1 强制扫描报告")
         lines.append("=" * 50)
         lines.append(f"📄 章节：{self.chapter_name}.md")
         lines.append(f"⏰ 时间：{now.strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"🔧 扫描器版本：v7.8")
+        lines.append(f"🔧 扫描器版本：v8.1")
         lines.append("=" * 50)
         lines.append("")
         
@@ -1608,6 +2008,110 @@ class SOPScanner:
                 lines.append(f'    → 建议：{match["suggestion"]}')
         lines.append("")
         
+        # 14. 比喻密度检测（v8.1 新增 R1）
+        lines.append("【比喻密度检测（v8.1 R1）】")
+        metaphor_result = self.results.get("metaphor_density", {})
+        if metaphor_result:
+            total = metaphor_result.get("total_metaphors", 0)
+            density = metaphor_result.get("density", 0)
+            word_count = metaphor_result.get("word_count", 0)
+            exceeded = metaphor_result.get("exceeded", False)
+            page_violations = metaphor_result.get("page_violations", [])
+            
+            lines.append(f"总比喻数：{total}")
+            lines.append(f"字数：{word_count}")
+            lines.append(f"密度：{density}/千字（阈值≤{THRESHOLDS['metaphor_density']}）")
+            
+            if not exceeded and not page_violations:
+                lines.append("状态：✓ 通过")
+            else:
+                if exceeded:
+                    lines.append(f"状态：⚠ 密度超标")
+                if page_violations:
+                    lines.append(f"状态：⚠ 第{', '.join(map(str, page_violations))}页比喻数超过{THRESHOLDS['metaphor_per_page']}个")
+            
+            # 显示匹配详情
+            matches = metaphor_result.get("matches", [])
+            if matches and self.verbose:
+                lines.append("匹配详情：")
+                for line_num, metaphor, context in matches[:5]:
+                    lines.append(f'  行{line_num}: "{metaphor}" - {context}')
+        else:
+            lines.append("状态：未检测")
+        lines.append("")
+        
+        # 15. 解释性插入检测（v8.1 新增 R2）
+        lines.append("【解释性插入检测（v8.1 R2 零容忍）】")
+        explanatory_results = self.results.get("explanatory_insertion", [])
+        if not explanatory_results:
+            lines.append("解释性插入：无 ✓")
+        else:
+            lines.append(f"解释性插入：{len(explanatory_results)}处 ✗")
+            for match in explanatory_results[:5]:
+                lines.append(f'  行{match["line"]}: "{match["pattern"]}"')
+                lines.append(f'    → 上下文：{match["text"]}')
+            if len(explanatory_results) > 5:
+                lines.append(f"  ... 还有 {len(explanatory_results) - 5} 处")
+        lines.append("")
+        
+        # 16. 开篇200字规则检测（v8.1 新增 R3）
+        lines.append("【开篇200字规则检测（v8.1 R3）】")
+        opening_result = self.results.get("opening_200_words", {})
+        if opening_result:
+            passed = opening_result.get("passed", False)
+            found = opening_result.get("found_elements", [])
+            missing = opening_result.get("missing_elements", [])
+            
+            if passed:
+                lines.append("状态：✓ 通过")
+                lines.append(f"包含元素：{', '.join(found)}")
+            else:
+                lines.append("状态：⚠ 未通过")
+                lines.append(f"包含元素：{', '.join(found) if found else '无'}")
+                lines.append(f"缺少元素：{', '.join(missing)}")
+                lines.append("建议：开篇200字应至少包含2种元素（动作/对话/冲突/系统事件）")
+        else:
+            lines.append("状态：未检测")
+        lines.append("")
+        
+        # 17. "某种/一种"禁用检测（v8.1 新增 R4）
+        lines.append("【某种/一种禁用检测（v8.1 R4 零容忍）】")
+        vague_results = self.results.get("vague_modifier", [])
+        if not vague_results:
+            lines.append("模糊修饰词：无 ✓")
+        else:
+            lines.append(f"模糊修饰词：{len(vague_results)}处 ✗")
+            for match in vague_results[:5]:
+                lines.append(f'  行{match["line"]}: "{match["modifier"]}"')
+                lines.append(f'    → 上下文：{match["text"]}')
+            if len(vague_results) > 5:
+                lines.append(f"  ... 还有 {len(vague_results) - 5} 处")
+        lines.append("")
+        
+        # 18. 体感重复检测（v8.1 新增 R5）
+        lines.append("【体感重复检测（v8.1 R5）】")
+        body_feeling_result = self.results.get("body_feeling_repeat", {})
+        if body_feeling_result:
+            feeling_counts = body_feeling_result.get("feeling_counts", {})
+            exceeded = body_feeling_result.get("exceeded", [])
+            
+            # 只显示出现过的体感词
+            non_zero = {k: v for k, v in feeling_counts.items() if v > 0}
+            if non_zero:
+                lines.append(f"体感词统计：")
+                for feeling, count in sorted(non_zero.items(), key=lambda x: -x[1]):
+                    status = "⚠ 超标" if count > THRESHOLDS["body_feeling_max"] else "✓"
+                    lines.append(f'  {feeling}: {count}次 {status}')
+            else:
+                lines.append("体感词：无 ✓")
+            
+            if exceeded:
+                lines.append(f"超标体感：{', '.join(exceeded)}")
+                lines.append(f"建议：每种体感词最多出现{THRESHOLDS['body_feeling_max']}次")
+        else:
+            lines.append("状态：未检测")
+        lines.append("")
+        
         # 总评（截图友好格式）
         lines.append("=" * 50)
         lines.append("【总评】")
@@ -1666,7 +2170,7 @@ def main():
     """主函数"""
     # 解析命令行参数
     parser = argparse.ArgumentParser(
-        description='SOP v7.7 强制扫描脚本（截图友好模式）',
+        description='SOP v8.1 强制扫描脚本（截图友好模式）',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 示例:
@@ -1678,6 +2182,13 @@ def main():
   0 - 全部通过
   1 - 有黄色警告（建议优化）
   2 - 有红色错误（必须修复）
+
+v8.1 更新:
+  - 新增R1比喻密度检测：scan_metaphor_density()
+  - 新增R2解释性插入检测：scan_explanatory_insertion()
+  - 新增R3开篇200字规则：scan_opening_200_words()
+  - 新增R4"某种/一种"禁用检测：scan_vague_modifier()
+  - 新增R5体感重复检测：scan_body_feeling_repeat()
 
 v7.7 更新:
   - 新增跨章一致性强制检查：角色属性、地点名称、物品位置、钩子质量、时间线过渡
@@ -1742,6 +2253,12 @@ v7.5 更新:
     scanner.scan_item_location_chain()          # v7.7 新增
     scanner.scan_hook_quality()                 # v7.7 新增
     scanner.scan_timeline_transition()          # v7.7 新增
+    # v8.1 新增
+    scanner.scan_metaphor_density()             # R1 比喻密度
+    scanner.scan_explanatory_insertion()        # R2 解释性插入
+    scanner.scan_opening_200_words()            # R3 开篇200字规则
+    scanner.scan_vague_modifier()               # R4 "某种/一种"禁用
+    scanner.scan_body_feeling_repeat()          # R5 体感重复
     
     # 生成并输出报告
     report = scanner.generate_report()
