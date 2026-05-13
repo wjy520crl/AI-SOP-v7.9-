@@ -1,11 +1,16 @@
+# 小说正文
+chapters/
+
 # 临时文件
-.trae-cn/
-*.tmp
-*.log
+__pycache__/
+*.pyc
+test_file.txt
+worktmp/
 
 # 系统文件
-Thumbs.db
 .DS_Store
+Thumbs.db
 
-# 上传用zip（已解压为仓库内容）
-novel-pipeline-v7.9.zip
+# 编辑器
+.vscode/
+.idea/
