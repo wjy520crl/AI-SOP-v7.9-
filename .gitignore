@@ -1,0 +1,11 @@
+# 临时文件
+.trae-cn/
+*.tmp
+*.log
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 上传用zip（已解压为仓库内容）
+novel-pipeline-v7.9.zip

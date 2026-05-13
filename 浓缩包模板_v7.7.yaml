@@ -1,0 +1,193 @@
+# 浓缩包模板 v7.7
+# 用途：跨章一致性追踪与强制检查
+# 更新日期：2026-05-12
+# 版本说明：新增5个v7.7字段（角色属性锁定、地点注册、物品位置链、钩子质量、时间线过渡）
+
+# ============================================================================
+# 基础信息
+# ============================================================================
+
+chapter_info:
+  number: "ChX"
+  title: "章节标题"
+  word_count: 3200
+  summary: "3-5句章节摘要"
+  key_dialogue: "1-2句金句"
+  ending_state: "人物状态+悬念"
+
+# ============================================================================
+# v6.9 追踪字段
+# ============================================================================
+
+active_subplots:
+  - name: "支线名称"
+    frozen_chapters: 0
+    last_push_ch: "ChX"
+
+moral_grayscale_tracker:
+  rational: 0
+  emotional: 0
+  compromise: 0
+
+moral_baseline:
+  phase: "隐忍/积累/爆发/成熟/统治"
+  acceptable: ["生存妥协", "灰色手段"]
+  unacceptable: ["出卖核心盟友", "主动伤害平民"]
+
+opponent_last_counter: "ChX"
+thought_anchor_last: "ChX"
+
+physical_anchor_items:
+  - name: "物象名"
+    type: "类型"
+    location: "当前位置"
+    status: "active/damaged/lost/gifted/destroyed"
+    first_ch: "ChX"
+    status_change_log:
+      - chapter: "ChX"
+        from: "原状态"
+        to: "新状态"
+        observer: "观察者角色"
+        quote: "原文引用"
+    # v7.7 新增：位置追踪链
+    location_chain:
+      - chapter: "ChX"
+        location: "位置A"
+        action: "发现/转移/移交/丢失"
+        observer: "观察者"
+    last_confirmed_by: "角色名"      # v7.7 新增
+    last_confirmed_chapter: "ChX"    # v7.7 新增
+
+hook_history: ["T1", "T3", "T2", "T5", "T4"]
+character_growth_phase: "隐忍/积累/爆发/成熟/统治"
+
+deviation_log:
+  - module: "1.1.2"
+    trigger: "维度一红色"
+    effect_score: 35
+    narrative_ok: true
+
+pending_questions:
+  - question: "问题内容"
+    asker: "提问角色"
+    suspended_ch: "ChX"
+    resolved: false
+
+emotional_pressure_map: ["M", "H", "H", "L", "M", "H"]
+
+memory_point_history:
+  "角色名": ["标志性动作", "口语习惯", "视觉特征"]
+
+# ============================================================================
+# v7.3 强制校验字段
+# ============================================================================
+
+chapter_end_state:
+  location: ""
+  time: ""
+  characters: []
+  item_chain_verified: true
+  cross_ref_checked: true
+  frozen_imagery_count: 0
+  not_is_but_count: 0
+  ship_status:
+    - name: "茶隼"
+      status: "可用/损坏/废弃/拖曳中"
+      captain: "陆川"
+      notes: ""
+  # v7.7 新增：钩子质量检查
+  hook_quality_check:
+    has_hook: true
+    hook_type: "信息型/悬念型/情绪型"
+    hook_content: "具体内容"
+    is_specific: true
+    character_reaction: "角色反应"
+
+# ============================================================================
+# v7.5 角色注册字段（v7.7升级）
+# ============================================================================
+
+character_registry:
+  # v7.7 升级：新增key_attributes关键属性锁定
+  - name: "角色名"
+    role: "角色定位"
+    first_appear: "ChX"
+    key_attributes:           # v7.7 新增：关键属性锁定
+      gender: "性别"          # 锁定，不可变更
+      age: 年龄               # 锁定
+      height: "身高"          # 锁定
+      background: "背景"
+    attribute_change_log: []  # v7.7 新增：属性变更日志
+    skills: []
+    notes: ""
+    injury_record: []
+
+# ============================================================================
+# v7.7 新增：地点注册表
+# ============================================================================
+
+location_registry:
+  - canonical_name: "规范名称"    # 必须使用此名称
+    aliases: ["别名1", "别名2"]   # 仅首次介绍可用
+    first_appear: "ChX"
+    description: "描述"
+
+# ============================================================================
+# v7.6 时间锚点字段
+# ============================================================================
+
+time_anchors:
+  关键事件名称: "X年"
+  当前篇章时间跨度: "X天"
+  关键事件时间戳:
+    - event: "事件名"
+      year: "X年前"
+      locked: true
+
+# ============================================================================
+# v7.7 新增：时间线连续性检查
+# ============================================================================
+
+timeline_continuity:
+  current_chapter: "ChX"
+  previous_chapter_end: "ChY"
+  transition_check:
+    time_gap: "X天"
+    location_change: "地点A→地点B"
+    has_transition: true
+    transition_summary: "过渡内容摘要"
+
+# ============================================================================
+# 强制校验规则
+# ============================================================================
+
+validation_rules:
+  - "item_chain_verified 必须为 true 才能进入下一步"
+  - "frozen_imagery_count > 0 → 退回编辑"
+  - "not_is_but_count > 0 → 退回编辑（v7.4 零容忍升级）"
+  - "新角色首次出场 → 必须在character_registry中注册"
+  - "已有角色再次出场 → 必须查阅character_registry确认设定一致"
+  - "v7.6: 每次提'X年前' → 必须grep time_anchors确认"
+  - "v7.6: 物象状态改变 → 必须有observer字段记录角色观察"
+  - "v7.6: 带伤行动 → 必须核对injury_record时间线"
+  - "v7.7: character_registry.key_attributes → 关键属性变更需记录attribute_change_log"
+  - "v7.7: location_registry → 地点名称必须使用canonical_name"
+  - "v7.7: physical_anchor_items.location_chain → 物品位置变更必须记录"
+  - "v7.7: hook_quality_check.is_specific → 钩子必须具体"
+  - "v7.7: timeline_continuity.has_transition → 章节过渡必须完整"
+
+# ============================================================================
+# 预提交检查清单（v7.7 - 10步）
+# ============================================================================
+
+pre_submit_checklist:
+  - "□ 1. 运行 sop_scanner.py —— 附完整输出截图"
+  - "□ 2. 核对截图与自检报告 —— 差异必须为0%"
+  - "□ 3. 检查 character_registry —— 关键属性是否锁定"
+  - "□ 4. 检查 location_registry —— 地点名称是否规范"
+  - "□ 5. 检查 physical_anchor_items —— 物品位置是否有变更记录"
+  - "□ 6. 检查 hook_quality_check —— 钩子是否具体"
+  - "□ 7. 检查 timeline_continuity —— 章节过渡是否完整"
+  - "□ 8. 人工快速浏览 —— 检查扫描器遗漏的语境问题"
+  - "□ 9. 核对浓缩包 —— 所有强制字段填写完整"
+  - "□ 10. 签字确认 —— 调度者签字+时间戳"
